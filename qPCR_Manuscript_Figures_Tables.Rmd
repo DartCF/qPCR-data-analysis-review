@@ -1,0 +1,818 @@
+---
+title: "Analyzing qPCR Data: Better Practices to Facilitate Rigor and Reproducibility - Figures and Tables Code"
+output: html_notebook
+---
+
+
+```{r message=F, warning=F}
+library(readxl)
+library(tidyverse)
+library(qpcR)
+library(rentrez)
+library(gtools)
+```
+
+# Load Data
+
+Load data used to create the figures and run the models. 
+
+```{r}
+qpcr_results_files <- c("./data/2024-03-07_GAPDH.xls","./data/2023-07-31_MMP10.xls")
+qpcr_metadata_files <- c("./data/Experiment Key GAPDH.xlsx","./data/Experiment Key MMP10.xlsx")
+files_list <- list("GAPDH" = c(qpcr_results_files[1], qpcr_metadata_files[1]),
+                   "MMP10" = c(qpcr_results_files[2], qpcr_metadata_files[2]))
+```
+
+Our lab uses the qPCR QuantStudio 3 machine running the QuantStudio Design and Analysis software v1.5.2, which generates results in Excel Workbooks. Each workbook has an "Amplification Data" sheet which contains the amplification information for each well on a 96-well plate (see `2024-03-07_GAPDH.xls` and `2023-07-31_MMP10.xls`). 
+
+The `ReadExcelAmplification` function extracts the amplification data from the generated Excel Workbooks and joins it with experimental metadata. In this worked example, metadata is provided in the `Experiment Key GAPDPH.xlsx` and `Experiment Key MMP10.xlsx` files.
+
+```{r}
+ReadExcelAmplifcation <- function(results_file, metadata_file){
+  # read data from provided excel spreadsheets
+  amp.curves <- read_excel(results_file, sheet = "Amplification Data", skip = 42, .name_repair = make.names)
+  metadata <- read_excel(metadata_file, skip = 10)
+  # join amplification data with metadata
+  amp.curves.annotated <- amp.curves |> 
+    inner_join(metadata, by=join_by("Well.Position"=="QPCR Well"))
+  
+  return(amp.curves.annotated)
+}
+```
+
+
+```{r}
+# read in amplification data
+amp.curves.annotated <- lapply(files_list, function(x){
+  ReadExcelAmplifcation(x[1], x[2])
+})
+names(amp.curves.annotated) <- names(files_list)
+```
+
+# Exploring Fluorescence Curves
+
+## Figure Theme
+```{r}
+figure_theme <- theme(axis.text = element_text(size = 18),
+                      axis.title = element_text(size = 20),
+                      legend.text = element_text(size = 18),
+                      legend.title = element_text(size = 20),
+                      panel.background = element_rect(fill = "white", colour = NA), 
+                      panel.border = element_rect(fill = NA, colour = "grey20"), 
+                      panel.grid = element_line(colour = "grey92"), 
+                      panel.grid.minor = element_line(linewidth = rel(0.5)), 
+                      strip.background = element_rect(fill = "grey85", colour = "grey20"), 
+                      complete = TRUE)
+```
+
+Create plotting dataframe.
+
+```{r}
+# GAPDH
+amp.curves.annotated$GAPDH$group <- paste(amp.curves.annotated$GAPDH$Donor, amp.curves.annotated$GAPDH$Treatment, sep = '_')
+
+GAPDH_mean_delta_df <- amp.curves.annotated$GAPDH %>%
+  group_by(Cycle, group) %>%  # Group by the 'group' column
+  summarise(Mean_Delta = mean(Delta.Rn))   
+ 
+GAPDH_mean_delta_df$Donor <- unlist(lapply(GAPDH_mean_delta_df$group, function (g){
+  unlist(strsplit(g, '_'))[1]
+}))
+
+GAPDH_mean_delta_df$Treatment <- unlist(lapply(GAPDH_mean_delta_df$group, function (g){
+  unlist(strsplit(g, '\\+ '))[2]
+}))
+
+# MMP10
+
+amp.curves.annotated$MMP10$group <- paste(amp.curves.annotated$MMP10$Donor, amp.curves.annotated$MMP10$Treatment, sep = '_')
+
+MMP10_mean_delta_df <- amp.curves.annotated$MMP10 %>%
+  group_by(Cycle, group) %>%  # Group by the 'group' column
+  summarise(Mean_Delta = mean(Delta.Rn))   
+ 
+MMP10_mean_delta_df$Donor <- unlist(lapply(MMP10_mean_delta_df$group, function (g){
+  unlist(strsplit(g, '_'))[1]
+}))
+
+MMP10_mean_delta_df$Treatment <- unlist(lapply(MMP10_mean_delta_df$group, function (g){
+  unlist(strsplit(g, '\\+ '))[2]
+}))
+```
+
+## Figure 1A
+
+```{r}
+Trips <- amp.curves.annotated$GAPDH[amp.curves.annotated$GAPDH$Donor %in% c("KK32G","KK29H") &
+                             amp.curves.annotated$GAPDH$Treatment ==  "ASM Media Control + DMSO", ]
+ggplot(Trips, aes(x = Cycle, y = Delta.Rn, colour = Well.Position,
+       linetype = Donor)) +
+  geom_line() +  # Use geom_line for a line plot
+  labs(
+    x = "Cycle",
+    y = "GAPDH Fluorescence",
+    title = ""
+  ) +
+  theme_set(figure_theme)
+
+ggsave("./Figures/GAPDH_Control_2Donors.pdf", width = 7, height = 5, units = "in")
+```
+
+## Figure 1B
+
+Plot All GAPDH Average Curves 
+
+```{r}
+ggplot(GAPDH_mean_delta_df, aes(x = Cycle, y = Mean_Delta, colour = Treatment, 
+       linetype = Donor)) +
+  geom_line() +  # Use geom_line for a line plot
+  labs(
+    x = "Cycle",
+    y = "GAPDH Fluorescence",
+    title = ""
+  ) + 
+  xlim(19,39) +
+  theme_set(figure_theme)
+ggsave("./Figures/GAPDH_average_cuves.pdf", width = 7, height = 5, units = "in")
+```
+
+## Figure 1C
+
+Plot average MMP10 curves for all donors
+```{r}
+ggplot(MMP10_mean_delta_df, aes(x = Cycle, y = Mean_Delta, colour = Treatment, 
+       linetype = Donor)) +
+  geom_line() +  # Use geom_line for a line plot
+  labs(
+    x = "Cycle",
+    y = "MMP10 Fluorescence",
+    title = ""
+  ) + xlim(19,39) +
+  theme_set(figure_theme) +
+  geom_hline(yintercept = 2, linetype = "dashed")  # Add the horizontal line
+
+ggsave("./Figures/MMP10_average_cuves.pdf", width = 7, height = 5, units = "in")
+```
+
+## Figure 1D
+
+Predict Fluoresence Values for Mean MMP10 Curves
+
+Curve fit function.
+
+```{r}
+# This function assumes fluorescence data are in columns and rows 
+# are cycles. 
+FitCurve <- function(amp.data){
+  # run pcrfit
+  pcrfit.models <- lapply(2:ncol(amp.data), function (well){
+    pcrfit(as.data.frame(amp.data), 1, well, model = l4)
+  })
+  well_ids <- unlist(lapply(pcrfit.models, function(m){m[["names"]]}))
+  names(pcrfit.models) <- well_ids
+  
+  return(pcrfit.models)
+}
+```
+
+Mean fluorescence in each group
+
+```{r}
+# make MMP10_mean_delta_df wide
+MMP10_mean_f <- amp.curves.annotated$MMP10 %>%
+  group_by(group, Cycle) %>%
+  summarize(mean_Delta.Rn = mean(Delta.Rn))
+
+
+MMP10_mean_f.wide <- MMP10_mean_f |> 
+  pivot_wider(id_cols=Cycle,
+              names_from = group,
+              values_from = mean_Delta.Rn)
+```
+
+Fit mean fluorescence at each cycle by group
+
+```{r}
+MMP10_mean_fits <- FitCurve(MMP10_mean_f.wide)
+
+MMP10_mean.Donor <- unlist(lapply(names(MMP10_mean_fits), function (n){
+  unlist(strsplit(n, '_'))[1]
+}))
+
+MMP10_mean.Treatment <- unlist(lapply(names(MMP10_mean_fits), function (n){
+   unlist(strsplit(n, '\\+ '))[2]
+}))
+
+MMP10_mean.Treatment <- sub("_+$", "", MMP10_mean.Treatment)
+```
+
+Predict point at which fluorescence reaches 2
+
+```{r}
+myCycles <- seq(from = 27, to = 38, by = 0.1)
+
+MMP10pred2 <- lapply(MMP10_mean_fits, function (m){
+  P <- predict(m, newdata = data.frame(Cycles = myCycles))
+  myCycles[which(P>2)[1]]
+})
+
+MMP10_Results <- data.frame("T" = unlist(MMP10pred2),
+                            "Donor"  = MMP10_mean.Donor,
+                            "Treatment" = MMP10_mean.Treatment
+                            )
+```
+
+Plot
+
+```{r}
+ggplot(MMP10_Results, aes(x = Treatment, y = T, shape = Donor, group = Donor)) +  
+  geom_line() +  # Create line plots
+  geom_point() + # Add points to make it easier to see the  data
+  labs(
+    x = "", 
+    y = "Cycle", 
+    title = ""
+  ) +
+  ylim(29, 37) +
+  theme_set(figure_theme) +
+  geom_point(size=4) 
+ggsave("./Figures/MMP10_Rn2.pdf", width = 7, height = 5, units = "in")
+```
+
+Simple statistics: Paired t test
+
+```{r}
+PairedMMP10 <- t.test(MMP10_Results$T[MMP10_Results$Treatment == "ETI"],
+       MMP10_Results$T[MMP10_Results$Treatment == "DMSO"],
+       paired = TRUE)
+
+PairedMMP10
+```
+
+Unpaired t test
+
+```{r}
+unPairedMMP10 <- t.test(MMP10_Results$T[MMP10_Results$Treatment == "ETI"],
+       MMP10_Results$T[MMP10_Results$Treatment == "DMSO"],
+       paired = FALSE)
+
+unPairedMMP10
+```
+
+# Manualy Estimating Efficiency from Fluorescence Slopes
+
+## Figure 2A
+
+```{r}
+MMP10_meanExpo <- MMP10_mean_delta_df[MMP10_mean_delta_df$Cycle > 23 & 
+                                      MMP10_mean_delta_df$Cycle < 29 , ]
+
+MMP10_meanExpo$log2F <- log2(MMP10_meanExpo$Mean_Delta)
+
+ggplot(MMP10_meanExpo, aes(x = Cycle, y = log2F, 
+                           colour = Treatment, 
+       shape = Donor)) +
+  geom_point() +  # Use geom_line for a line plot
+  labs(
+    x = "Cycle",
+    y = "Delta Rn (log2)"
+  ) +
+  geom_point(size=4) +
+  geom_smooth(method = "lm", se = FALSE) +
+  theme_set(figure_theme) 
+
+ggsave("./Figures/MMP10_Exponential.pdf", width = 7, height = 5, units="in")
+```
+
+## Figure 2B
+
+Slope Differences
+
+
+```{r}
+MMP10_eff <- sapply(unique(MMP10_meanExpo$group), function (g){
+  r <- coefficients(summary(lm( log2F ~ Cycle, data = MMP10_meanExpo[MMP10_meanExpo$group == g,])))
+  r["Cycle", "Estimate"]
+})
+
+names(MMP10_eff)<- str_replace(unique(MMP10_meanExpo$group), "_.*\\+ ", "_") 
+
+# Split the strings on the underscore
+split_strings <- str_split(names(MMP10_eff), "_")
+
+MMP10_eff_df <- data.frame("Efficiency" = MMP10_eff,
+"Donor" =  sapply(split_strings, function(x) x[1]),
+"Treatment" = sapply(split_strings, function(x) x[2])
+)
+
+ggplot(MMP10_eff_df, aes(x = Donor, y = Efficiency, fill = Treatment)) +  # Fill by 'Treatment'
+  geom_bar(stat = "identity", position = "dodge") +  # Use 'dodge' for side-by-side bars
+  labs(
+    x = "Donor", 
+    y = "Slope", 
+  ) +
+  theme(figure_theme)+
+  theme(axis.text.x = element_text(angle = 45))
+ 
+ggsave("./Figures/EffEstSlope.pdf", width = 7, height = 5, units = "in")
+```
+
+# PubMed Central References to qPCR
+
+
+```{r}
+# Function to search PubMed Central and count "qPCR" mentions in methods sections
+search_pmc <- function(year) {
+  # Search term for methods section mentioning qPCR in a specific year
+  search_term <- paste0("(\"methods\"[Section] AND qPCR) AND ", year, "[PDAT]")
+
+  # Search PubMed Central
+  search_result <- entrez_search(db = "pmc", term = search_term)
+
+  # Return the count of articles found
+  return(search_result$count)
+}
+
+# Years to search (e.g., 2010 to 2023)
+years <- 2010:2023
+
+# Create an empty data frame to store results
+results <- data.frame(Year = integer(), Count = integer())
+
+# Loop through each year and perform the search
+for (year in years) {
+  count <- search_pmc(year)
+  results <- rbind(results, data.frame(Year = year, Count = count))
+  Sys.sleep(1)  # Pause to avoid overloading the server
+}
+
+# Print the results
+print(results)
+```
+
+## Figure 3A
+
+```{r}
+# Optional: Plot the results using ggplot2
+ggplot(results, aes(x = Year, y = Count)) +
+  geom_col() +
+  labs(x = "", 
+       y = "Publications") +
+  scale_y_continuous(labels = scales::comma) +
+  scale_x_continuous(breaks = seq(2010, 2023, 3))+
+  theme(axis.text.x = element_text(angle = 45))
+
+ggsave("./Figures/qPCR.Ref.pdf", width = 7, height = 5, units = "in")
+```
+
+## Figure 3B
+
+```{r}
+DDCTvPfaffl <- read_excel("./data/DDCTvPfaffl.xlsx")
+# Reshape the data for ggplot
+df_long <- DDCTvPfaffl %>% 
+  pivot_longer(cols = c("DDCT", "Pfaffl"), names_to = "Method", values_to = "Value")
+
+# Create the ggplot
+ggplot(df_long, aes(x = Year, y = Value, fill = Method)) +
+  geom_col(position = "dodge") +  # Use 'dodge' for side-by-side bars
+  labs(
+    x = "", 
+    y = "Citations") +
+  theme_set(figure_theme) +
+  scale_y_continuous(labels = scales::comma) +
+  scale_fill_discrete(
+    labels = c(expression(paste(Delta,Delta, "Ct")), "Pfaffl") 
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))   
+
+ggsave("./Figures/DDCTvPfaffl.pdf", width = 7, height = 5, units = "in")
+```
+
+# Amplification Efficiency
+
+Plots showing amplification efficiency for each well on a qPCR plate or for each replicate group.
+
+```{r}
+# format data for GAPDH and MMP10
+GAPDH.amp.curves.annotated.wide <- amp.curves.annotated$GAPDH |> 
+  pivot_wider(id_cols = Cycle,
+              names_from = Well.Position,
+              values_from = Delta.Rn)
+MMP10.amp.curves.annotated.wide <- amp.curves.annotated$MMP10 |> 
+  pivot_wider(id_cols=Cycle,
+              names_from = Well.Position,
+              values_from = Delta.Rn)
+
+# format data with replicates
+amp.curves.annotated.replicates <- lapply(amp.curves.annotated, function(gene.data){
+  # get replicate IDs from metadata
+  replicate.ids <- unique(gene.data$`Sample Number for qPCR`)
+  # generate wide-format data frame from each replicate group
+  replicate.list <- lapply(replicate.ids, function(rep){
+    rep.data <- gene.data |> 
+      filter(`Sample Number for qPCR` == rep) |> 
+      pivot_wider(id_cols = Cycle,
+                  names_from = Well.Position,
+                  values_from = Delta.Rn)
+    return(rep.data)
+  })
+  names(replicate.list) <- replicate.ids
+  return(replicate.list)
+})
+names(amp.curves.annotated.replicates) <- names(amp.curves.annotated)
+```
+
+Helper functions to get efficiency data and create graphs.
+
+```{r}
+GetEfficiencyEstimates <- function(amp.data){
+  # run pcrfit
+  pcrfit.models <- lapply(2:ncol(amp.data), function (well){
+    pcrfit(as.data.frame(amp.data), 1, well, model = l4)
+  })
+  well_ids <- unlist(lapply(pcrfit.models, function(m){m[["names"]]}))
+  names(pcrfit.models) <- well_ids
+  
+  # extract efficiency estimates
+  eff.estimates <- sapply(pcrfit.models, function (m){
+    efficiency(m, method = "spline", plot = FALSE)[["eff"]]
+  }, USE.NAMES = T, simplify = "array")
+  
+  return(eff.estimates)
+}
+
+GetEfficiencyEstimates.Replicates <- function(amp.data.replicates){
+  # run pcrfit for each batch of replicates
+  pcrfit.models <- lapply(amp.data.replicates, function (batch){
+    pcrfit(as.data.frame(batch), 1, 2:ncol(batch), model = l4)
+  })
+  names(pcrfit.models) <- names(amp.data.replicates)
+  
+  # extract efficiency estimates
+  eff.estimates <- sapply(pcrfit.models, function (m){
+    efficiency(m, method = "spline", plot = FALSE)[["eff"]]
+  }, USE.NAMES = T, simplify = "array")
+  
+  return(eff.estimates)
+}
+
+GraphEfficiencyEstimatesColored <- function(plot.df, ylab="Well ID"){
+  
+  stats.df <- data.frame(Mean=mean(plot.df$Eff), 
+                         Lower = mean(plot.df$Eff)-sd(plot.df$Eff),
+                         Upper = mean(plot.df$Eff)+sd(plot.df$Eff),
+                         ypos = levels(plot.df$Well)[floor(nrow(plot.df)/2)])
+  
+  p.obj <- ggplot(data=plot.df, aes(y=Well, x=Eff, color=Donor, shape=Treatment))+
+    geom_point(size=2.5)+
+    geom_vline(xintercept = c(1,2), color="black", linetype="dashed")+
+    geom_point(data=stats.df, aes(x=Mean, y=ypos), color="red",size=2, alpha =0.8, inherit.aes = F, show.legend = F)+
+    geom_errorbar(data=stats.df, aes(y=ypos, xmax = Upper, xmin = Lower), inherit.aes = F, color="red", show.legend = F)+
+    annotate("text",
+             y=stats.df$ypos, 
+             x=stats.df$Upper+0.2, 
+             label=paste0("Mean(eff):",round(stats.df$Mean,2), "\n", "Std. Dev.(eff):", round(stats.df$Upper - stats.df$Mean,2)),
+             size = 4)+
+    theme_minimal()+
+    theme(legend.position = "right", 
+          legend.justification.right = "top",
+          plot.background = element_rect(fill="white"),
+          axis.text = element_text(size=12, color = "black"),
+          legend.text = element_text(size=18),
+          legend.title = element_text(size=20))+
+    labs(x="Efficiency Estimate",
+         y=ylab,
+         color = "Donor")
+  return(p.obj)
+}
+```
+
+## Figure 4A
+
+GAPDH individual well amplification efficiencies. 
+
+```{r}
+GAPDH.eff.estimates <- GetEfficiencyEstimates(GAPDH.amp.curves.annotated.wide)
+figA.df <- data.frame(Well=factor(names(GAPDH.eff.estimates), levels=rev(mixedsort(names(GAPDH.eff.estimates)))), 
+                      Eff = GAPDH.eff.estimates)
+
+# Join in metadata
+GAPDH.metadata <- read_excel(qpcr_metadata_files[1], skip=10)
+GAPDH.metadata <- GAPDH.metadata |> 
+  dplyr::select(Donor, Treatment, `QPCR Well`) |> 
+  rename(WellID = `QPCR Well`) |> 
+  mutate(Treatment = str_split_i(Treatment, " \\+ ", 2)) |> 
+  mutate(Label = paste(Donor, Treatment, sep = " "))
+
+figA.plot <- figA.df |> 
+  left_join(GAPDH.metadata, by=join_by("Well"=="WellID")) |> 
+  mutate(Well=factor(Well, levels = rev(mixedsort(Well))))
+
+# Create graph
+GraphEfficiencyEstimatesColored(figA.plot)+
+  labs(title="GAPDH Efficiency")
+ggsave("./Figures/Figure4A.pdf", width = 7, height = 6, units = "in")
+```
+
+## Figure 4B
+
+MMP10 individual well amplification efficiencies. 
+
+```{r}
+MMP10.eff.estimates <- GetEfficiencyEstimates(MMP10.amp.curves.annotated.wide)
+figB.df <- data.frame(Well=factor(names(MMP10.eff.estimates), levels=rev(mixedsort(names(GAPDH.eff.estimates)))), 
+                      Eff = MMP10.eff.estimates)
+
+# Join in metadata
+MMP10.metadata <- read_excel(qpcr_metadata_files[2], skip=10)
+MMP10.metadata <- MMP10.metadata |> 
+  dplyr::select(Donor, Treatment, `QPCR Well`) |> 
+  rename(WellID = `QPCR Well`) |> 
+  mutate(Treatment = str_split_i(Treatment, " \\+ ", 2)) |> 
+  mutate(Label = paste(Donor, Treatment, sep = " "))
+
+figB.plot <- figB.df |> 
+  left_join(MMP10.metadata, by=join_by("Well"=="WellID")) |> 
+  mutate(Well=factor(Well, levels = rev(mixedsort(Well))))
+
+# Create graph
+GraphEfficiencyEstimatesColored(figB.plot)+
+  labs(title="MMP10 Efficiency")
+ggsave("./Figures/Figure4B.pdf", width = 7, height = 6, units = "in")
+```
+
+## Figure 4C
+
+GAPDH replicate group amplification efficiencies. 
+
+```{r}
+GAPDH.eff.estimates.reps <- GetEfficiencyEstimates.Replicates(amp.curves.annotated.replicates$GAPDH)
+
+figC.df <- data.frame(Well=factor(names(GAPDH.eff.estimates.reps), levels=rev(mixedsort(names(GAPDH.eff.estimates.reps)))), 
+                      Eff = GAPDH.eff.estimates.reps)
+
+# Join in metadata
+partC.metadata <- amp.curves.annotated[["GAPDH"]] |> 
+  dplyr::select(`Sample Number for qPCR`, Treatment, Donor) |> 
+  distinct() |> 
+  mutate(Treatment = str_split_i(Treatment, " \\+ ", 2)) |> 
+  mutate(Label = paste(Donor, Treatment, sep=" ")) |> 
+  mutate(Well  = factor(`Sample Number for qPCR`))
+
+figC.plot <- figC.df |> 
+  left_join(partC.metadata, by=join_by(Well))
+
+# Create graph
+GraphEfficiencyEstimatesColored(figC.plot, ylab="Replicate Group")+
+  labs(title = "GAPDH Efficiency")
+ggsave("./Figures/Figure4C.pdf", width = 7, height = 5, units = "in")
+```
+
+## Figure 4D
+
+MMP10 replicate group amplification efficiencies. 
+
+```{r}
+MMP10.eff.estimates.rep <- GetEfficiencyEstimates.Replicates(amp.curves.annotated.replicates$MMP10)
+figD.df <- data.frame(Well=factor(names(MMP10.eff.estimates.rep), levels=rev(mixedsort(names(MMP10.eff.estimates.rep)))), 
+                      Eff = MMP10.eff.estimates.rep)
+
+# Join in metadata
+partD.metadata <- amp.curves.annotated[["MMP10"]] |> 
+  dplyr::select(`Sample Number for qPCR`, Treatment, Donor) |> 
+  distinct() |> 
+  mutate(Treatment = str_split_i(Treatment, " \\+ ", 2)) |> 
+  mutate(Label = paste(Donor, Treatment, sep=" ")) |> 
+  mutate(Well  = factor(`Sample Number for qPCR`))
+
+figD.plot <- figD.df |> 
+  left_join(partD.metadata, by=join_by(Well))
+
+# Create graph
+GraphEfficiencyEstimatesColored(figD.plot, ylab="Replicate Group")+
+  labs(title = "MMP10 Efficiency")
+ggsave("./Figures/Figure4D.pdf", width = 7, height = 5, units = "in")
+```
+
+# Reference and Target Cycle Thresholds 
+
+Visualize whether treatment effects CT of reference genes.
+
+```{r}
+ReadExcelCTResults <- function(results_file, metadata_file){
+  results <- read_excel(results_file, sheet = "Results", skip = 42, .name_repair = make.names)
+  metadata <- read_excel(metadata_file, skip = 10)
+  
+  results.merged <- results |> 
+    inner_join(metadata, by=join_by("Well.Position" == "QPCR Well"))
+  
+  return(results.merged)
+}
+```
+
+
+```{r}
+ct.results.annotated <- lapply(files_list, function(x){
+  ReadExcelCTResults(x[1],x[2])
+})
+```
+
+Helper functions to format CT data for plotting and modeling and to graph CT data.
+
+```{r}
+FormatCT.ANCOVA <- function(CTResults, SampleCol="Sample.Name", DonorCol="Donor", TreatmentCol="Treatment", TargetCol="Target.Name", CTCol="Ct.Mean"){
+  formatted <- CTResults |> 
+    dplyr::select(all_of(c(SampleCol, DonorCol, TreatmentCol, TargetCol, CTCol))) |> 
+    distinct()
+  return(formatted)
+}
+
+JoinCTResults <- function(CT1, CT2, TreatmentCol="Treatment", TargetCol="Target.Name", DonorCol="Donor", CTCol = "Ct.Mean"){
+  CT1$Group <- paste0(CT1[[DonorCol]]," ",CT1[[TreatmentCol]])
+  CT2$Group <- paste0(CT2[[DonorCol]], " ", CT2[[TreatmentCol]])
+  CT1.gene <- CT1[[TargetCol]][1]
+  CT2.gene <- CT2[[TargetCol]][1]
+  
+  joined.results <- CT1[,c(DonorCol, TreatmentCol, "Group", CTCol)] |> 
+    inner_join(CT2[,c("Group",CTCol)], by=join_by(Group), suffix = c(paste0(".",CT1.gene), paste0(".",CT2.gene)))
+  
+  return(joined.results)
+}
+
+GraphCT <- function(CTData, CT1Col="Ct.Mean.GAPDH", CT2Col="Ct.Mean.MMP10", TreatmentCol="Treatment", DonorCol="Donor"){
+  plot.df <- CTData |> 
+    pivot_longer(cols = all_of(c(CT1Col, CT2Col)),
+                 values_to = "CT",
+                 names_to = "Gene")
+  plot.df$LineGroup <- paste0(plot.df[[DonorCol]]," ",plot.df$Gene)
+  
+  # rename treatment col for group_by access
+  plot.df$AccessTreatment <- plot.df[[TreatmentCol]]
+  # calculate average CT for each gene across each treatment group
+  average.df <- plot.df |> 
+    group_by(AccessTreatment, Gene) |> 
+    summarise(meanCT = mean(CT)) |> 
+    rename(AvgLineGroup=Gene)
+  
+  # plot CT by treatment group, colored by Donor
+  p.obj <- ggplot(plot.df, aes_string(x=TreatmentCol, y="CT"))+
+    geom_point(aes_string(shape="Gene", color = DonorCol), size=4)+
+    geom_line(aes_string(group = "LineGroup", color = DonorCol))+
+    theme_set(figure_theme)
+  
+  # add lines representing average CT for each gene / treatment combination
+  p.obj <- p.obj+
+    geom_point(data=average.df, aes(x=AccessTreatment, y=meanCT, shape=AvgLineGroup), size=4, inherit.aes = F)+
+    geom_line(data=average.df, aes(x=AccessTreatment, y=meanCT, group=AvgLineGroup), inherit.aes = F, linetype="dashed")
+    
+  return(p.obj)
+}
+```
+
+Format CT data. 
+
+```{r}
+GAPDH.CT <- FormatCT.ANCOVA(ct.results.annotated$GAPDH)
+MMP10.CT <- FormatCT.ANCOVA(ct.results.annotated$MMP10)
+
+# reformat treatment column
+GAPDH.CT$Treatment <- gsub(" ","",str_split_i(GAPDH.CT$Treatment,"\\+",2))
+MMP10.CT$Treatment <- gsub(" ","",str_split_i(MMP10.CT$Treatment,"\\+",2))
+
+# join data
+CT.joined <- JoinCTResults(GAPDH.CT, MMP10.CT)
+```
+
+
+## Figure 5A
+
+CT values for GAPDH and MMP10 stratified by donor and treatment.
+
+```{r}
+GraphCT(CT.joined)
+ggsave("./Figures/Figure5A.pdf")
+```
+
+## Figure 5B
+
+Correlation between GAPDH and MMP10
+
+```{r}
+CT.joined.Means <- CT.joined
+
+colnames(CT.joined.Means) <- c("Donor","Treatment","Group", "GAPDH", "MMP10")
+
+Cor.plot.df <-  pivot_longer(CT.joined.Means, cols = c("GAPDH", "MMP10"),
+                             values_to = "CT",
+                             names_to = "Gene")
+
+ggplot(CT.joined.Means, aes(x=GAPDH, y=MMP10, col=Donor, shape = Treatment) ) +
+  geom_point(size = 4) +
+  geom_smooth(aes(group=1), method = "lm", formula = y ~ x, se = FALSE, color= "black") +
+  theme_set(figure_theme)
+
+ggsave("./Figures/Figure5B.pdf")
+```
+## Figure 5C
+
+CT values for DEFB1 and HSP90AB stratified by donor and treatment.
+
+```{r}
+CT_mat <- read.csv(file="./data/CTmat.csv")
+All.CT <- merge(CT.joined.Means[, c("Donor", "Treatment", "Group")],  CT_mat, by.x = "Group", by.y = "X") 
+GraphCT(All.CT, CT1Col="HSP90AB", CT2Col="DEFB1", TreatmentCol="Treatment", DonorCol="Donor")
+ggsave("./Figures/Figure5C.pdf")
+```
+
+## Figure 5D
+
+Correlation between GAPDH and MMP10
+
+```{r}
+ggplot(All.CT, aes(x=HSP90AB, y=DEFB1, col=Donor, shape = Treatment) ) +
+  geom_point(size = 4) +
+  geom_smooth(aes(group=1), method = "lm", formula = y ~ x, se = FALSE, color= "black") +
+  theme_set(figure_theme)
+
+ggsave("./Figures/Figure5D.pdf")
+```
+
+# ANCOVA Modeling
+
+Correlation between GPDH and MMP10 CT values
+
+```{r}
+GAPDH.MMP10.corr <- cor.test(CT.joined.Means$GAPDH, CT.joined.Means$MMP10)
+
+GAPDH.MMP10.rsq <- GAPDH.MMP10.corr$estimate^2
+GAPDH.MMP10.corr
+```
+Once the data are in the right format, ANCOVA is easy. ETI matters.
+
+## Table 2
+
+Data in format ready for modeling.
+
+```{r}
+CT.joined.Means
+```
+## MMP10 Model
+
+Model MMP10 as a function of donor, treatment, and reference gene GAPDH.
+
+```{r}
+MMP10.Donor.ETI.GAPDH.fit <- lm(MMP10 ~ Donor + Treatment + GAPDH, data = CT.joined.Means)
+summary(MMP10.Donor.ETI.GAPDH.fit)
+```
+
+### Table 3
+
+MMP10 modeling results. 
+
+```{r}
+MMP10_digest <- summary(MMP10.Donor.ETI.GAPDH.fit)$coefficients
+
+# Create a data frame from the summary
+MMP10_digest <- data.frame(
+  Term = rownames(MMP10_digest)[-1],
+  Estimate = MMP10_digest[-1, "Estimate"],
+  p_value = MMP10_digest[-1, "Pr(>|t|)"],
+  row.names = NULL  # Remove row names for cleaner output
+)
+MMP10_digest
+```
+
+```{r}
+write.csv(MMP10_digest, file = "MMP10_digest.csv", row.names = FALSE)
+```
+
+
+## DEFB1 Model
+
+ANCOVA of DEFB1 using HSP90AB as a reference
+
+```{r}
+DEFB1.Donor.ETI.HSP90AB.fit <- lm(DEFB1 ~ Donor + Treatment + HSP90AB, data = All.CT)
+summary(DEFB1.Donor.ETI.HSP90AB.fit)
+```
+
+### Table 4
+
+```{r}
+DEFB1_digest <- summary(DEFB1.Donor.ETI.HSP90AB.fit)$coefficients
+
+# Create a data frame from the summary
+DEFB1_digest <- data.frame(
+  Term = rownames(DEFB1_digest)[-1],
+  Estimate = DEFB1_digest[-1, "Estimate"],
+  p_value = DEFB1_digest[-1, "Pr(>|t|)"],
+  row.names = NULL  # Remove row names for cleaner output
+)
+
+DEFB1_digest
+```
+
+```{r}
+write.csv(DEFB1_digest, file = "DEFB1_digest.csv", row.names = FALSE)
+```
