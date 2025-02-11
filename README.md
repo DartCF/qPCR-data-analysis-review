@@ -7,7 +7,7 @@ Companion code for the qPCR Data Analysis Review manuscript, titled "Analyzing q
 
 - qPCR data analysis tutorial, which explores reference gene stability, amplification efficiency and ANCOVA modeling: `TutorialV2.Rmd`
 
-- Code for simulations reported in the manuscript.
+- Code for simulations reported in the manuscript: `PCR_Normalization_Alternatives.Rmd`
 
 
 All data loaded in the figures/tables and tutorial R Notebooks are in the data folder. Contents includes:
