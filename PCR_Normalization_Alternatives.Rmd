@@ -1,0 +1,300 @@
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set Up
+```{r}
+remove(list=ls())
+d <- read.csv("..\\Data\\DEFB1.HSP90.csv")
+library(lme4)
+
+d$Gene <- factor(d$Gene, levels = c("HSP90AB", "DEFB1"))
+d$Modulator <- as.factor(d$Modulator)
+
+d
+```
+# Note: This study "crosses" (e.g. paired design) both exposures in each donor
+
+
+```{r}
+boxplot(d$CT ~ paste(d$Gene, "after", d$Modulator), xlab="", ylab="CT")
+```
+
+
+# Data frame is "long"
+# Reshape so both genes and both exposures (modulators) on same row 
+```{r}
+d$GeneMod <- paste(d$Gene, d$Modulator)
+dd<-d[,c("Donor","GeneMod", "CT")]
+(d.wide <- stats::reshape(dd, direction="wide", idvar=c("Donor"), timevar = "GeneMod", v.name=c("CT")))
+```
+
+# We want to compare gene expression between the two exposures (ETI and DMSO)
+# We are concerned sample quality will compromise our analysis
+# A referent gene supposedly captures the level of sample quality
+# And does not vary as the exposure varies
+
+# Delta CT - "Correct" target gene expression by subtracting referent gene 
+```{r}
+d.wide$Delta.CT.ETI <- d.wide[,"CT.DEFB1 ETI"] - d.wide[,"CT.HSP90AB ETI"]
+d.wide$Delta.CT.DMSO <- d.wide[,"CT.DEFB1 DMSO"] - d.wide[,"CT.HSP90AB DMSO"]
+
+```
+
+# Delta Delta CT
+```{r}
+d.wide$DDCT <- d.wide$Delta.CT.ETI - d.wide$Delta.CT.DMSO
+
+t.test(d.wide$DDCT) # 1-sample (paired) t-test
+
+wilcox.test(d.wide$DDCT) # paired rank test
+
+```
+
+
+# Visuals
+```{r}
+par(mfrow=c(1,1))
+plot(as.numeric(d$Modulator), d$CT, axes=F, pch=substr(d$Gene, 1,1), xlim=c(0.5,2.5), xlab="", ylab="CT")
+axis(2)
+axis(1, 1:2, levels(d$Modulator))
+d$GeneMod <- paste(d$Gene, d$Modulator)
+dd<-d[,c("Donor","GeneMod", "CT")]
+(d.wide <- stats::reshape(dd, direction="wide", idvar=c("Donor"), timevar = "GeneMod", v.name=c("CT")))
+for (i in 1:length(unique(d.wide$Donor))) {
+  nm <- unique(d.wide$Donor)[i]
+  row <- d.wide$Donor==nm
+  lines(c(1,2), c(d.wide[row, "CT.DEFB1 DMSO"], d.wide[row, "CT.DEFB1 ETI"]), col=i+1, lwd=2)
+  lines(c(1,2), c(d.wide[row, "CT.HSP90AB DMSO"], d.wide[row, "CT.HSP90AB ETI"]), col=i+1, lwd=2)
+}
+```
+
+```{r}
+par(mfrow=c(1,1))
+plot(as.numeric(d$Gene), d$CT, axes=F, pch=16, xlim=c(0.5,2.5), xlab="", ylab="CT")
+axis(2)
+axis(1, 1:2, levels(d$Gene))
+d$GeneMod <- paste(d$Gene, d$Modulator)
+dd<-d[,c("Donor","GeneMod", "CT")]
+(d.wide <- stats::reshape(dd, direction="wide", idvar=c("Donor"), timevar = "GeneMod", v.name=c("CT")))
+nms <- unique(d.wide$Donor)
+for (i in 1:length(nms)) {
+nm <- unique(d.wide$Donor)[i]
+  row <- d.wide$Donor==nm
+  lines(c(1,2), c(d.wide[row, "CT.HSP90AB ETI"], d.wide[row, "CT.DEFB1 ETI"]), col=i+1, lwd=2, lty=1)
+  lines(c(1,2), c(d.wide[row, "CT.HSP90AB DMSO"], d.wide[row, "CT.DEFB1 DMSO"]), col=i+1, lwd=2, lty=3)
+}
+```
+
+# Is gene expression equally variable ?
+```{r}
+tapply(d$CT, d$Gene, sd)
+# one side p-value for test that DEFB1 has greater variance
+1 - pf(var(d$CT[d$Gene=="DEFB1"])/var(d$CT[d$Gene=="HSP90AB"]), df1=9, df2=9)
+```
+
+# Delta-delta-CT done using the long data form and mixed effects with interaction
+```{r}
+summary(lm(CT ~ Gene * Modulator, data=d))
+
+summary(lmer(CT ~ Gene * Modulator + (Gene|Donor), data=d))
+```
+
+
+# Multivariable adjustment: A convention in biostat, epidem., econ, soc. sci
+# Use a linear model that "adjusts" for referent gene
+# The coefficient for referent is expected to be close to +1 if delta-delta-CT normalization is appropriate
+```{r}
+(d2.wide <- stats::reshape(d[, c("Donor", "Gene", "Modulator","CT")], direction="wide", idvar=c("Donor","Modulator"), 
+                   timevar = "Gene", v.name=c("CT")))
+```
+
+# A correlation and scatterplot give us idea of the relation of DEFB1 to HSP90AB
+# But it is foggied by the presence of variation between subjects in both
+```{r}
+cor.test(d2.wide$CT.HSP90AB, d2.wide$CT.DEFB1)
+o <- lm(CT.DEFB1 ~ CT.HSP90AB, data=d2.wide)
+plot(d2.wide$CT.HSP90AB, d2.wide$CT.DEFB1, pch=16, col=ifelse(d2.wide$Modulator=="ETI", 3,1), ylim=c(22,28), xlab="Referent", ylab="Target")
+abline(o, lwd=2)
+abline(a=mean(d2.wide$CT.DEFB1)-mean(d2.wide$CT.HSP90AB), b=1, lty=3)
+
+plot(d2.wide$CT.HSP90AB, d2.wide$CT.DEFB1, pch=16, ylim=c(22,28), xlab="Referent", ylab="Target")
+abline(o, lwd=2)
+
+```
+
+
+```{r}
+DDCTAdj.DEFB1 <-  d2.wide$CT.DEFB1 - d2.wide$CT.HSP90AB + mean(d2.wide$CT.HSP90AB)
+rng <- range(d2.wide$CT.DEFB1, DDCTAdj.DEFB1)
+rng <- rng + diff(rng)*c(-.05,+0.05)
+
+cor.test(d2.wide$CT.HSP90AB, d2.wide$CT.DEFB1)
+plot(d2.wide$CT.HSP90AB, d2.wide$CT.DEFB1, pch=16, col=ifelse(d2.wide$Modulator=="ETI", 3,1), ylim=rng)
+
+DDCTAdj.DEFB1 <-  d2.wide$CT.DEFB1 - d2.wide$CT.HSP90AB + mean(d2.wide$CT.HSP90AB)
+points(d2.wide$CT.HSP90AB, DDCTAdj.DEFB1, col=ifelse(d2.wide$Modulator=="ETI", 3,1))
+points(d2.wide$CT.HSP90AB, DDCTAdj.DEFB1, col=ifelse(d2.wide$Modulator=="ETI", 3,1))
+```
+
+```{r}
+plot(d2.wide$CT.HSP90AB, d2.wide$CT.DEFB1, pch=16, col=ifelse(d2.wide$Modulator=="ETI", 3,1))
+for (nm in unique(d2.wide$Donor)) {
+  keep <- d2.wide$Donor==nm 
+  lines(d2.wide$CT.HSP90AB[keep], d2.wide$CT.DEFB1[keep], cex=0.1, lty=3)
+}  
+```
+# Enough reason to simply do a paired t-test
+```{r}
+diff <- d2.wide$CT.DEFB1[c(2,4,6,8,10)] - d2.wide$CT.DEFB1[c(1,3,5,7,9)]
+t.test(diff)
+wilcox.test(diff)
+```
+
+multivariable model
+```{r}
+coefficients(summary(lm(CT.DEFB1 ~ Modulator + CT.HSP90AB, data=d2.wide)))
+
+ 
+```
+
+
+multivariable model with random effect
+```{r}
+(o.lmer <- coefficients(summary(lmer(CT.DEFB1 ~ Modulator + CT.HSP90AB + (1|Donor), data=d2.wide))))
+
+pt(-3.96, df=10-4)
+
+require(ci.tools)
+ 
+```
+
+Permutation
+```{r}
+Perm.Tr <- rep(NA, dim(d2.wide)[1])
+Perm.Coef.Tr <- rep(NA, 2^5)
+for (i in 0:(2^5-1)) {
+  rem <- i
+  d4 <- floor(i/16)
+  d3 <- floor((rem <- (rem - d4*16))/8)
+  d2 <- floor((rem <- (rem - d3* 8))/4)
+  d1 <- floor((rem <- (rem - d2* 4))/2)
+  d0 <- floor((rem <- (rem - d1* 2))/1)
+  Perm.Tr[c(1,3,5,7,9)] <- c(d0,d1,d2,d3,d4)
+  Perm.Tr[c(2,4,6,8,10)] <- 1 - c(d0,d1,d2,d3,d4)
+  o <- coefficients(summary(lmer(CT.DEFB1 ~ Perm.Tr + CT.HSP90AB + (1|Donor), data=d2.wide)))
+  Perm.Coef.Tr[i] <- o[2, "Estimate"]
+}
+plot(rep(0,32), Perm.Coef.Tr, pch=16, axes=FALSE, ylim=c(-1,1), ylab="Permutation Distribution")
+axis(2, c(-1,-0.5,0,+0.5,+1))
+abline(h=o.lmer[2, "Estimate"])
+```
+
+Targets: "DEFB1"   "HMOX1"   "IL1B"    "MMP10"   "MMP12"   "TNF"     
+ 
+References: "GAPDH"   "GUSB"    "HPRT1"   "HSP90AB"   "UBC"
+
+
+```{r}
+d.All <- read.csv("..\\Data\\AllCTmat.csv")
+
+d.All$Donor <- substr(d.All$X, 1,5)
+d.All$Modulator <- substr(d.All$X, 7,10)
+
+Target.Names <- c("DEFB1", "HMOX1", "IL1B", "MMP10",  "MMP12",  "TNF")     
+
+```
+
+
+```{r}
+apply(d.All[,2:12], 2, var)
+```
+"GAPDH"   "GUSB"    "HPRT1"   "HSP90AB"   "UBC"
+```{r}
+coefficients(summary(lmer(DEFB1 ~ Modulator + HSP90AB + (1|Donor), data=d.All)))
+coefficients(summary(lmer(DEFB1 ~ Modulator + GAPDH + (1|Donor), data=d.All)))
+coefficients(summary(lmer(DEFB1 ~ Modulator + GUSB + (1|Donor), data=d.All)))
+coefficients(summary(lmer(DEFB1 ~ Modulator + HPRT1 + (1|Donor), data=d.All)))
+coefficients(summary(lmer(DEFB1 ~ Modulator + UBC + (1|Donor), data=d.All)))
+```
+
+# This is plausible but overwhelms the estimation - too many degrees of freedom used for sample size - rule of thumb df < n / 5 
+```{r}
+coefficients(summary(lmer(DEFB1 ~ Modulator + HSP90AB + GAPDH + GUSB + HPRT1 + UBC + (1|Donor), data=d.All)))
+
+```
+
+# Somewhat ad hoc but we can use average of referent genes
+```{r}
+d.All$AveRef <- rowMeans(d.All[, c("GAPDH", "GUSB", "HPRT1", "HSP90AB", "UBC")])
+coefficients(summary(lmer(DEFB1 ~ Modulator + AveRef + (1|Donor), data=d.All)))
+
+
+```
+
+# Do it for the other target genes
+```{r}
+Tbl <- NULL
+for (nm in Target.Names) {
+  cat(nm, "\n")
+  print(o.c <- coefficients(summary(lmer(d.All[,nm] ~ Modulator + AveRef + (1|Donor), data=d.All))))
+  p <- 2 * pnorm(-abs(o.c[2,"t value"]))
+  Tbl <- rbind(Tbl, c(o.c[2,1:2], P.value=p))
+}
+rownames(Tbl) <- Target.Names
+Tbl
+
+y.max <- max(abs(Tbl[,"Estimate"]))
+plot(Tbl[,"Std. Error"], Tbl[,"Estimate"], type="n", ylim=c(-y.max,+y.max), ylab="CT", xlab="Standard Error")
+text(Tbl[,"Std. Error"], Tbl[,"Estimate"], Target.Names)
+z.bonf <- abs(qnorm(0.05/(2*length(Target.Names))))
+y.grid <- c(-y.max,0,+y.max)
+lines(c(y.max/ z.bonf, 0, y.max/z.bonf), y.grid, col=2)
+
+
+```
+
+
+
+# Some math
+$Y$ is gene expression in the target gene
+$Z$ is gene expression in the referent gene
+$X$ is indicator for treatment (exposure, modulator) 1=yes, 0=no (i.e. control)
+
+Suppose ${\rm E}Y_T = \beta_0 + \beta_1 X + \epsilon_D + \epsilon_S + \epsilon_T$ 
+where
+$\beta_0$ is average of target gene if no treatment
+$\beta_1$ is effect of treatment on target gene
+$\epsilon_D$ is the noise (variation) from donor
+$\epsilon_S$ is the noise (variation) from this particular sample
+$\epsilon_T$ is the noise for target gene in this sample for this donor
+
+And $Y_R = \alpha_0 + \alpha_1 X + \epsilon_D + \epsilon_S + \epsilon_R$ where
+$\alpha_0$ is average of referent gene if no treatment
+$\alpha_1$ is effect of treatment on referent gene
+$\epsilon$ is as above
+$\epsilon_R$ is the noise for referent gene in this sample
+
+The assumption underlying the concept of referent genes is that
+$\alpha_1=0$ and that therefore any variation specific to the sample,
+$\epsilon_S$ or donor $\epsilon_D$ can be removed by substracting referent
+from target gene experssion,
+${\rm E}(Y_T - Y_R)$ equals
+$\beta_0 + \beta_1 X + \epsilon_D + \epsilon_S + \epsilon_T$
+minus
+$\alpha_0 + \alpha_1 X + \epsilon_D + \epsilon_S + \epsilon_R$
+which is
+$(\beta_0-\alpha_0) + (\beta_1-\alpha_1) X + \epsilon_T - \epsilon_R$
+and if the assumption $\alpha_1$ holds this is
+$(\beta_0-\alpha_0) + \beta_1 X + \epsilon_T - \epsilon_R$
+
+There is two ways in which this may be disavantagous
+A. If $\alpha_1$ is not zero then it will bias estimation of treatment effect
+B. We may have added variance (e.g. standard error) in estimation if 
+$\epsilon_R$ is large relative to $\epsilon_S$ ...
+
+Allow different variation for T and R due to donor and sample
+
+
+
